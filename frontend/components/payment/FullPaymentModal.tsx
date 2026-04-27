@@ -18,6 +18,7 @@ import {
   type FullPaymentReceipt,
 } from "@/lib/paymentApi";
 import { handleError } from "@/lib/toast";
+import { useTranslations } from "next-intl";
 
 interface FullPaymentModalProps {
   paymentId: string;
@@ -34,6 +35,8 @@ export function FullPaymentModal({
   onOpenChange,
   onSuccess,
 }: FullPaymentModalProps) {
+  const t = useTranslations("payment");
+  const commonT = useTranslations("common");
   const [step, setStep] = useState<Step>("loading");
   const [preview, setPreview] = useState<FullPaymentPreview | null>(null);
   const [receipt, setReceipt] = useState<FullPaymentReceipt | null>(null);
@@ -62,11 +65,11 @@ export function FullPaymentModal({
       setPreview(data);
       setStep("preview");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to load payment details");
+      setErrorMsg(err instanceof Error ? err.message : t("somethingWentWrong"));
       setStep("error");
       handleError(err);
     }
-  }, [paymentId]);
+  }, [paymentId, t]);
 
   const handleConfirm = async () => {
     if (!preview) return;
@@ -77,7 +80,7 @@ export function FullPaymentModal({
       setStep("receipt");
       onSuccess?.(data);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Payment failed");
+      setErrorMsg(err instanceof Error ? err.message : t("somethingWentWrong"));
       setStep("error");
       handleError(err);
     }
@@ -100,7 +103,7 @@ export function FullPaymentModal({
         {step === "loading" && (
           <div className="flex flex-col items-center gap-4 py-10">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Loading payment details…</p>
+            <p className="text-sm text-muted-foreground">{t("loadingDetails")}</p>
           </div>
         )}
 
@@ -108,9 +111,9 @@ export function FullPaymentModal({
         {(step === "preview" || step === "confirming") && preview && (
           <>
             <DialogHeader>
-              <DialogTitle className="font-bold">Full payment</DialogTitle>
+              <DialogTitle className="font-bold">{t("fullPayment")}</DialogTitle>
               <DialogDescription>
-                Review how your payment will be distributed before confirming.
+                {t("reviewDistribution")}
               </DialogDescription>
             </DialogHeader>
 
@@ -123,7 +126,7 @@ export function FullPaymentModal({
                 onClick={() => handleOpenChange(false)}
                 disabled={step === "confirming"}
               >
-                Cancel
+                {commonT("cancel")}
               </Button>
               <Button
                 className="flex-1 border-2 border-foreground font-bold shadow-[3px_3px_0px_0px_rgba(26,26,26,1)] transition-all hover:translate-x-0.5 hover:translate-y-0.5 hover:shadow-[1px_1px_0px_0px_rgba(26,26,26,1)]"
@@ -133,10 +136,10 @@ export function FullPaymentModal({
                 {step === "confirming" ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Processing…
+                    {t("processing")}
                   </>
                 ) : (
-                  "Confirm payment"
+                  t("confirmPayment")
                 )}
               </Button>
             </div>
@@ -149,10 +152,10 @@ export function FullPaymentModal({
             <DialogHeader>
               <div className="flex items-center gap-2">
                 <Receipt className="h-5 w-5 text-secondary-foreground" />
-                <DialogTitle className="font-bold">Payment receipt</DialogTitle>
+                <DialogTitle className="font-bold">{t("receipt")}</DialogTitle>
               </div>
               <DialogDescription>
-                Reference:{" "}
+                {t("reference")}:{" "}
                 <span className="font-mono font-bold text-foreground">{receipt.reference}</span>
               </DialogDescription>
             </DialogHeader>
@@ -172,7 +175,7 @@ export function FullPaymentModal({
               className="mt-4 w-full border-2 border-foreground font-bold"
               onClick={() => handleOpenChange(false)}
             >
-              Done
+              {commonT("close")}
             </Button>
           </>
         )}
@@ -181,7 +184,7 @@ export function FullPaymentModal({
         {step === "error" && (
           <>
             <DialogHeader>
-              <DialogTitle className="font-bold">Something went wrong</DialogTitle>
+              <DialogTitle className="font-bold">{t("somethingWentWrong")}</DialogTitle>
             </DialogHeader>
             <div className="flex items-start gap-3 border-2 border-destructive/30 bg-destructive/10 p-4">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
@@ -193,13 +196,13 @@ export function FullPaymentModal({
                 className="flex-1 border-2 border-foreground font-bold"
                 onClick={() => handleOpenChange(false)}
               >
-                Close
+                {commonT("close")}
               </Button>
               <Button
                 className="flex-1 border-2 border-foreground font-bold"
                 onClick={handleOpen}
               >
-                Try again
+                {t("tryAgain")}
               </Button>
             </div>
           </>

@@ -4,12 +4,14 @@ import { CheckCircle2 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import type { PayoutBreakdown as PayoutBreakdownType } from "@/lib/paymentApi";
+import { useTranslations } from "next-intl";
 
 function formatNgn(amount: number) {
   return new Intl.NumberFormat("en-NG", {
     style: "currency",
     currency: "NGN",
-    minimumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(amount);
 }
 
@@ -44,6 +46,7 @@ interface PayoutBreakdownProps {
  * Works in both preview (pre-confirmation) and receipt (post-payment) modes.
  */
 export function PayoutBreakdown({ breakdown, confirmed, className }: PayoutBreakdownProps) {
+  const t = useTranslations("payment");
   const { totalAmount, platformShare, reporterShare, landlordAmount } = breakdown;
 
   return (
@@ -56,41 +59,41 @@ export function PayoutBreakdown({ breakdown, confirmed, className }: PayoutBreak
       {confirmed && (
         <div className="mb-3 flex items-center gap-2 border-2 border-secondary bg-secondary/20 px-3 py-2">
           <CheckCircle2 className="h-4 w-4 text-secondary-foreground" />
-          <span className="text-sm font-bold">Payment confirmed</span>
+          <span className="text-sm font-bold">{t("paymentConfirmed")}</span>
         </div>
       )}
 
       <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-        Reward distribution
+        {t("rewardDistribution")}
       </p>
 
       <LineItem
-        label="Platform fee"
-        sublabel="Covers platform operations"
+        label={t("platformFee")}
+        sublabel={t("platformFeeSubLabel")}
         amount={platformShare}
       />
 
       {reporterShare !== null ? (
         <LineItem
-          label="Reporter reward"
-          sublabel="Paid to the property reporter"
+          label={t("reporterReward")}
+          sublabel={t("reporterRewardSubLabel")}
           amount={reporterShare}
         />
       ) : (
         <div className="flex items-start justify-between gap-4 py-2">
           <div>
-            <p className="text-sm text-muted-foreground">Reporter reward</p>
-            <p className="text-xs text-muted-foreground">No reporter on this listing</p>
+            <p className="text-sm text-muted-foreground">{t("reporterReward")}</p>
+            <p className="text-xs text-muted-foreground">{t("noReporter")}</p>
           </div>
           <span className="font-mono text-sm text-muted-foreground shrink-0">—</span>
         </div>
       )}
 
-      <LineItem label="Landlord payout" amount={landlordAmount} />
+      <LineItem label={t("landlordPayout")} amount={landlordAmount} />
 
       <Separator className="my-3 border-foreground/20" />
 
-      <LineItem label="Total charged" amount={totalAmount} bold />
+      <LineItem label={t("totalCharged")} amount={totalAmount} bold />
     </div>
   );
 }

@@ -24,6 +24,8 @@ import { createPaymentsRouter } from "./routes/payments.js";
 import { createAdminRouter } from "./routes/admin.js";
 import { createDealsRouter } from "./routes/deals.js";
 import { createWhistleblowerRouter } from "./routes/whistleblower.js";
+import { createWhistleblowerApplicationsRouter } from "./routes/whistleblowerApplications.js";
+import { createAdminWhistleblowerApplicationsRouter } from "./routes/adminWhistleblowerApplications.js";
 import { createStakingRouter } from "./routes/staking.js";
 import { createWebhooksRouter } from "./routes/webhooks.js";
 import { createDepositsRouter } from "./routes/deposits.js";
@@ -55,11 +57,8 @@ import {
   PostgresLinkedAddressStore,
 } from "./models/linkedAddressStore.js";
 import { StubRewardsDataLayer } from "./services/stub-rewards-data-layer.js";
+import { PostgresRewardsDataLayer } from "./services/postgres-rewards-data-layer.js";
 import authRouter from "./routes/auth.js";
-import {
-  StubReceiptRepository,
-  PostgresReceiptRepository,
-} from "./indexer/receipt-repository.js";
 import { ReceiptIndexer } from "./indexer/worker.js";
 import { createReceiptsRouter } from "./routes/receiptsRoute.js";
 import { getPool, getPoolMetricsForOtel } from "./db.js";
@@ -78,9 +77,9 @@ import migrationGuideRouter from "./routes/migrationGuide.js";
 import adminTimelockRouter from "./routes/admin-timelock.js";
 import { TimelockIndexer } from "./indexer/timelock-worker.js";
 import {
-  PostgresTimelockRepository,
-  StubTimelockRepository,
-} from "./indexer/timelock-repository.js";
+  createReceiptRepository,
+  createTimelockRepository,
+} from "./indexer/repositoryBootstrap.js";
 import { TimelockProcessor } from "./indexer/timelock-processor.js";
 import { MetricsSorobanAdapter } from "./soroban/metrics-adapter.js";
 import { CircuitBreakerAdapter } from "./soroban/circuit-breaker-adapter.js";
@@ -96,14 +95,31 @@ import {
   PostgresJobStore,
 } from "./jobs/scheduler/index.js";
 import { createAdminJobsRouter } from "./routes/adminJobs.js";
+import { createLandlordPropertiesRouter } from "./routes/landlordProperties.js";
 import { createLandlordRouter } from "./routes/landlord.js";
 import { authenticateToken } from "./middleware/auth.js";
 import { createTenantApplicationsRouter } from "./routes/tenantApplications.js";
 import { createTenantPaymentsRouter } from "./routes/tenantPayments.js";
+import { createNotificationsRouter } from "./routes/notifications.js";
+import { createSettlementAdminRouter } from "./routes/settlementAdmin.js";
+import { SettlementOutboxWorker } from "./settlement/worker.js";
+import { durableIdempotencyService } from "./services/durableIdempotencyService.js";
+import { createSupportRouter } from "./routes/support.js";
+import { createPropertyIssueReportsRouter } from "./routes/propertyIssueReports.js";
 import {
   PostgresTenantApplicationStore,
   initTenantApplicationStore,
 } from "./models/tenantApplicationStore.js";
+import {
+  PostgresPartnerLandlordApplicationStore,
+  initPartnerLandlordApplicationStore,
+} from "./models/partnerLandlordApplicationStore.js";
+import {
+  PostgresWhistleblowerSignupApplicationStore,
+  initWhistleblowerSignupApplicationStore,
+} from "./models/whistleblowerSignupApplicationStore.js";
+import { createPartnerLandlordApplicationsRouter } from "./routes/partnerLandlordApplications.js";
+import { createApartmentReviewsRouter } from "./routes/apartmentReviews.js";
 
 import {
   sanitizeRequest,
@@ -211,7 +227,10 @@ export function createApp() {
     : new InMemoryLinkedAddressStore();
   const ngnWalletService = new NgnWalletService();
 
-  const rewardsDataLayer = new StubRewardsDataLayer();
+  // Initialize rewards data layer - use persistent implementation when DATABASE_URL is set
+  const rewardsDataLayer = process.env.DATABASE_URL
+    ? new PostgresRewardsDataLayer()
+    : new StubRewardsDataLayer();
   const earningsService = new EarningsServiceImpl(rewardsDataLayer, {
     usdcToNgnRate: 1600, // Example exchange rate: 1 USDC = 1600 NGN
   });
@@ -258,15 +277,47 @@ export function createApp() {
     workers.push(jobScheduler);
   }
 
+  const settlementOutboxWorker = new SettlementOutboxWorker();
+  if (env.NODE_ENV !== "test") {
+    settlementOutboxWorker.start(
+      parseInt(process.env.SETTLEMENT_OUTBOX_POLL_MS ?? "4000", 10),
+    );
+    workers.push({ stop: () => settlementOutboxWorker.stop() });
+  }
+
+  let idemReaper: ReturnType<typeof setInterval> | null = null;
+  if (env.NODE_ENV !== "test") {
+    const ms = parseInt(process.env.IDEMPOTENCY_RECONCILE_MS ?? "300000", 10);
+    idemReaper = setInterval(() => {
+      void durableIdempotencyService.reconcileStale();
+    }, ms);
+    if (idemReaper.unref) idemReaper.unref();
+    workers.push({
+      stop: async () => {
+        if (idemReaper) {
+          clearInterval(idemReaper);
+          idemReaper = null;
+        }
+      },
+    });
+  }
+
   // Tenant Application Store — swap to Postgres when DATABASE_URL is set
   if (process.env.DATABASE_URL) {
     initTenantApplicationStore(new PostgresTenantApplicationStore());
+    initPartnerLandlordApplicationStore(
+      new PostgresPartnerLandlordApplicationStore(),
+    );
+    initWhistleblowerSignupApplicationStore(
+      new PostgresWhistleblowerSignupApplicationStore(),
+    );
   }
 
   // Indexer
-  const receiptRepo = process.env.DATABASE_URL
-    ? new PostgresReceiptRepository()
-    : new StubReceiptRepository();
+  const receiptRepo = createReceiptRepository(
+    process.env.DATABASE_URL,
+    env.NODE_ENV,
+  );
   const indexer = new ReceiptIndexer(sorobanAdapter, receiptRepo, {
     pollIntervalMs: parseInt(process.env.INDEXER_POLL_MS ?? "5000"),
     startLedger: process.env.INDEXER_START_LEDGER
@@ -277,9 +328,10 @@ export function createApp() {
   workers.push(indexer);
 
   // Timelock Indexer
-  const timelockRepo = process.env.DATABASE_URL
-    ? new PostgresTimelockRepository()
-    : new StubTimelockRepository();
+  const timelockRepo = createTimelockRepository(
+    process.env.DATABASE_URL,
+    env.NODE_ENV,
+  );
   const timelockProcessor = new TimelockProcessor(timelockRepo);
   const timelockIndexer = new TimelockIndexer(
     sorobanAdapter as any,
@@ -377,6 +429,8 @@ export function createApp() {
   app.use("/", publicRouter);
   app.use("/api", createBalanceRouter(sorobanAdapter));
   app.use("/api", createReceiptsRouter(receiptRepo));
+  app.use("/api/support", createSupportRouter());
+  app.use("/api/property-issue-reports", createPropertyIssueReportsRouter());
   app.use(
     "/api/wallet",
     createWalletRateLimiter(env),
@@ -405,6 +459,8 @@ export function createApp() {
   app.use("/api/admin", createAdminAuditRouter());
   app.use("/api/deals", createDealsRouter());
   app.use("/api/whistleblower", createWhistleblowerRouter(earningsService));
+  app.use("/api/whistleblower-applications", createWhistleblowerApplicationsRouter());
+  app.use("/api/admin/whistleblower-applications", createAdminWhistleblowerApplicationsRouter());
   app.use(
     "/api/staking",
     createStakingRouter(
@@ -419,9 +475,21 @@ export function createApp() {
   app.use("/api/webhooks", createWebhooksRouter(ngnWalletService));
   app.use("/api/deposits", createDepositsRouter(conversionService));
   app.use("/api/gas-metrics", createGasMetricsRouter());
+  app.use("/api/landlord/properties", createLandlordPropertiesRouter());
+  app.use(
+    "/api/landlord/partner-applications",
+    createPartnerLandlordApplicationsRouter(),
+  );
   app.use("/api/landlord", authenticateToken, createLandlordRouter());
   app.use("/api/tenant/applications", createTenantApplicationsRouter());
+  app.use(
+    "/api/whistleblower/applications",
+    createWhistleblowerApplicationsRouter(),
+  );
   app.use("/api/tenant/payments", createTenantPaymentsRouter());
+  app.use("/api/notifications", createNotificationsRouter());
+  app.use("/api/admin", createSettlementAdminRouter());
+  app.use("/api/apartment-reviews", createApartmentReviewsRouter());
   app.use("/api", migrationGuideRouter);
 
   // Interactive API documentation
